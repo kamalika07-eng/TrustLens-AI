@@ -5,6 +5,7 @@ import re
 import hmac
 import html
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 from utils.analyzer import analyze_message
@@ -354,7 +355,14 @@ def show_notice(message, kind="info"):
 
 def render_history_table(dataframe):
     """Render a high-contrast HTML table instead of the canvas-based grid."""
-    columns = ["Date", "Message", "Risk", "Score", "Confidence"]
+    columns = [
+        "Date",
+        "Message",
+        "Risk",
+        "Risk Level",
+        "Score",
+        "Confidence"
+   ]
     display_df = dataframe.copy()
 
     for column in columns:
@@ -614,7 +622,9 @@ if page == "Overview":
         with chart_col2:
             trend_df = history_df.copy()
             trend_df["Date"] = pd.to_datetime(
-                trend_df["Date"], errors="coerce"
+                trend_df["Date"],
+                format="%d-%m-%Y %I:%M:%S %p IST",
+                errors="coerce"
             ).dt.strftime("%d %b")
             trend = (
                 trend_df.dropna(subset=["Date"])
@@ -699,6 +709,10 @@ elif page == "Message Analyzer":
 
                 score = result.get("score", 0)
                 risk = str(result.get("risk", "Unknown"))
+                classification = str(
+                    result.get("classification", "Unknown")
+     )
+                recommendation = result.get("recommendation", "")
                 indicators = result.get("indicators", [])
                 confidence = result.get("confidence", 0)
 
@@ -723,24 +737,22 @@ elif page == "Message Analyzer":
                 r2.metric("Risk Level", risk)
                 r3.metric("Confidence", str(confidence))
 
-                if risk_normalized == "suspicious":
+                if classification == "Suspicious":
                     show_notice(
-                        "Warning: The analyzer identified suspicious patterns. "
-                        "Verify the request through official channels.",
+                        f"Warning: {risk} detected. "
+                        "Verify the message through official channels.",
                         "error"
-                    )
-                elif risk_normalized == "safe":
-                    show_notice(
-                        "The analyzer did not report suspicious indicators. "
-                        "This result does not guarantee that the message is safe.",
-                        "success"
-                    )
+                   )
+
                 else:
                     show_notice(
-                        "The analyzer returned an unclassified risk level. "
-                        "Review the result carefully.",
-                        "warning"
-                    )
+                        f"{risk}: No strong suspicious patterns detected. "
+                        "Always verify payment requests independently.",
+                        "success"
+        )
+
+                st.subheader("💡 Recommended Action")
+                show_notice(recommendation, "info")
 
                 st.subheader("🚩 Detected Indicators")
                 if indicators:
@@ -759,13 +771,16 @@ elif page == "Message Analyzer":
                         "info"
                     )
 
+                india_time = datetime.now(
+                    ZoneInfo("Asia/Kolkata")
+                ) 
                 st.session_state.history.append({
-                    "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Date": india_time.strftime("%d-%m-%Y %I:%M:%S %p IST"),
                     "Message": message,
                     "Risk": risk,
                     "Score": score,
                     "Confidence": confidence
-                })
+              })
 
             except Exception as error:
                 show_notice(f"Analysis failed: {error}", "error")
