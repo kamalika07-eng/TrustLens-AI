@@ -356,13 +356,8 @@ def show_notice(message, kind="info"):
 def render_history_table(dataframe):
     """Render a high-contrast HTML table instead of the canvas-based grid."""
     columns = [
-        "Date",
-        "Message",
-        "Risk",
-        "Risk Level",
-        "Score",
-        "Confidence"
-   ]
+    "Date", "Message", "Risk", "Risk Level", "Score", "Confidence"
+    ] 
     display_df = dataframe.copy()
 
     for column in columns:
@@ -709,6 +704,72 @@ elif page == "Message Analyzer":
 
                 score = result.get("score", 0)
                 risk = str(result.get("risk", "Unknown"))
+                risk_level = str(result.get("risk_level", "Unknown"))
+                classification = str(
+                    result.get("classification", risk)
+                )
+                indicators = result.get("indicators", [])
+                confidence = result.get("confidence", 0)
+                recommendation = result.get("recommendation", "")
+
+                if indicators is None:
+                     indicators = []
+                elif isinstance(indicators, str):
+                     indicators = [indicators]
+
+                st.session_state.last_analysis = {
+                    "score": score,
+                    "risk": classification,
+                    "risk_level": risk_level,
+                    "indicators": indicators,
+                    "confidence": confidence,
+                    "recommendation": recommendation
+                }
+
+                st.markdown("---")
+                st.subheader("📋 Analysis Results")
+
+                r1, r2, r3 = st.columns(3)
+                r1.metric("Risk Score", f"{score}/100")
+                r2.metric("Risk Level", risk_level)
+          
+                r3.metric("Confidence", f"{confidence}%")
+
+                if classification.strip().lower() == "suspicious":
+                    show_notice(
+                        f"Warning: {risk_level} detected. "
+                        "Verify the message through official channels.",
+                        "error"
+                    )
+                else:
+                    show_notice(
+                        f"{risk_level}: No strong suspicious patterns detected. "
+                        "Always verify unexpected requests independently.",
+                        "success"
+                )
+
+                st.subheader("🚩 Detected Indicators")
+
+                if indicators:
+                    for item in indicators:
+                        st.markdown(
+                            f"""
+                           <div class="custom-card">
+                                <p>⚠️ {html.escape(str(item))}</p>
+                           </div>
+                            """,
+                           unsafe_allow_html=True
+                        )
+                else:
+                    show_notice(
+                        "No suspicious indicators were detected.",
+                        "info"
+             )
+
+
+                st.subheader("💡 Recommended Action")
+                show_notice(recommendation, "info")
+                risk = str(result.get("risk", "Unknown"))
                 classification = str(
                     result.get("classification", "Unknown")
      )
@@ -940,3 +1001,4 @@ elif page == "About":
 
     st.markdown("---")
     st.caption("TrustLens AI | Hackathon Prototype | 2026")
+

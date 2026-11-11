@@ -3,107 +3,114 @@ import re
 from urllib.parse import urlparse
 
 
-# =========================================================
-# TRUSTLENS AI - PAYMENT MESSAGE RISK ANALYZER
-# Transparent rule-based risk scoring for demo/testing
-# =========================================================
+# ---------------------------------------------------------
+# TRUSTLENS AI - RULE-BASED MESSAGE ANALYZER
+# Experimental prototype; not a certified fraud detector.
+# ---------------------------------------------------------
 
-# Strong indicators: requests for sensitive credentials
-CREDENTIAL_PATTERNS = [
-    r"\b(share|send|provide|tell|reply with|forward)\b.{0,45}\b(otp|pin|password|passcode|verification code)\b",
-    r"\b(otp|pin|password|passcode|verification code)\b.{0,45}\b(share|send|provide|tell|reply with)\b",
-]
+PATTERNS = {
+    "Credential request": (
+        r"\b(otp|one[- ]time password|password|pin|"
+        r"cvv|security code|verification code)\b"
+    ),
+    "Account threat": (
+        r"\b(account|bank account|card|wallet)\b.{0,60}"
+        r"\b(blocked|suspended|restricted|locked|disabled|"
+        r"closed|deactivated|terminated)\b"
+        r"|"
+        r"\b(blocked|suspended|restricted|locked|disabled)\b"
+        r".{0,60}\b(account|bank account|card|wallet)\b"
+    ),
+    "Urgency": (
+        r"\b(urgent|immediately|right now|act now|"
+        r"today|within \d+ hours|before midnight|"
+        r"final warning|last chance|without delay)\b"
+    ),
+    "Link action": (
+        r"\b(click|tap|open|visit|follow)\b.{0,60}"
+        r"\b(link|website|url|button)\b"
+    ),
+    "Personal detail verification": (
+        r"\b(verify|confirm|update|validate)\b.{0,60}"
+        r"\b(details|account|information|identity|"
+        r"payment|card|profile)\b"
+    ),
+    "Prize or reward": (
+        r"\b(won|winner|prize|reward|cashback|"
+        r"free gift|lottery)\b"
+    ),
+    "Payment pressure": (
+        r"\b(pay now|send money|transfer now|"
+        r"processing fee|claim fee|pay fee|"
+        r"deposit now|urgent payment)\b"
+    ),
+    "Refund fee request": (
+        r"\b(refund|reimbursement)\b.{0,60}"
+        r"\b(fee|charge|payment|deposit)\b"
+    ),
+}
 
-# Urgency and account threats
-URGENCY_PATTERN = (
-    r"\b(urgent|immediately|right now|act now|within 24 hours|"
-    r"today only|final warning)\b"
-)
-
-ACCOUNT_THREAT_PATTERN = (
-    r"\b(account will be blocked|account blocked|account suspended|"
-    r"account restricted|account will be closed|"
-    r"account suspension|service will be suspended|"
-    r"wallet blocked|connection will be disconnected)\b"
-)
-
-# Rewards and payment scams
-PRIZE_PATTERN = (
-    r"\b(won|winner|lottery|prize|free gift|"
-    r"cashback reward|selected for a reward)\b"
-)
-
-FEE_PATTERN = (
-    r"\b(processing fee|registration fee|delivery charges|"
-    r"claim fee|activation fee|pay a fee|advance payment)\b"
-)
-
-REFUND_FEE_PATTERN = (
-    r"\b(refund|money back)\b.{0,60}\b(fee|charges|payment)\b"
-)
-
-# Suspicious links
 URL_PATTERN = r"https?://[^\s]+|www\.[^\s]+"
 
-SHORT_URL_DOMAINS = {
+SHORTENER_DOMAINS = {
     "bit.ly",
     "tinyurl.com",
     "t.co",
     "is.gd",
     "cutt.ly",
-    "shorturl.at"
-}
-
-SUSPICIOUS_URL_WORDS = {
-    "verify",
-    "account-alert",
-    "secure-update",
-    "claim-reward",
-    "free-gift",
-    "login-verification"
+    "rb.gy",
 }
 
 
-def contains_pattern(pattern, text):
-    return bool(re.search(pattern, text, re.IGNORECASE))
+def contains_pattern(pattern, message):
+    return bool(re.search(pattern, message, re.IGNORECASE))
 
 
-def analyze_urls(message):
-    """Check URLs for basic suspicious patterns."""
+def find_urls(message):
+    return re.findall(URL_PATTERN, message, re.IGNORECASE)
 
-    found = []
 
-    urls = re.findall(URL_PATTERN, message, re.IGNORECASE)
+def check_suspicious_urls(message):
+    indicators = []
 
-    for url in urls:
-        candidate = url.rstrip(".,!?;:)")
+    for url in find_urls(message):
+        candidate = url.strip(".,!?;:()[]{}")
 
-        if candidate.startswith("www."):
+        if candidate.lower().startswith("www."):
             candidate = "https://" + candidate
 
         try:
             parsed = urlparse(candidate)
             domain = (parsed.hostname or "").lower()
 
-            if domain in SHORT_URL_DOMAINS:
-                found.append("Shortened URL detected")
-
-            if any(
-                word in candidate.lower()
-                for word in SUSPICIOUS_URL_WORDS
-            ):
-                found.append("Suspicious URL wording detected")
+            if domain in SHORTENER_DOMAINS:
+                indicators.append("Shortened URL detected")
 
             if parsed.scheme.lower() == "http":
-                found.append("Unencrypted HTTP link detected")
+                indicators.append("Unencrypted HTTP link detected")
+
+            if "@" in parsed.netloc:
+                indicators.append("URL contains an unusual @ symbol")
 
         except ValueError:
-            found.append("URL could not be fully checked")
+            indicators.append("URL could not be parsed")
 
-    return list(dict.fromkeys(found))
+    return list(dict.fromkeys(indicators))
 
 
 def analyze_message(message):
+    """
+    Analyze a message using transparent pattern-based rules.
+
+    Returns:
+        score: heuristic score from 0 to 100
+        risk: 'Suspicious' or 'Safe' for dashboard compatibility
+        risk_level: Critical / High / Medium / Low Risk
+        classification: Suspicious or Safe
+        indicators: list of matched warning indicators
+        confidence: heuristic indicator-strength estimate
+        recommendation: suggested safe next step
+    """
 
     if not isinstance(message, str):
         raise TypeError("Message must be a string.")
@@ -111,177 +118,146 @@ def analyze_message(message):
     message = message.strip()
 
     if not message:
-        raise ValueError("Please enter a payment message.")
+        raise ValueError("Please enter a message to analyze.")
 
     score = 0
     indicators = []
 
-    # -----------------------------------------------------
-    # 1. CRITICAL CREDENTIAL REQUEST
-    # -----------------------------------------------------
+    # Detect individual patterns.
+    detected = {}
 
-    credential_request = any(
-        contains_pattern(pattern, message)
-        for pattern in CREDENTIAL_PATTERNS
-    )
+    for name, pattern in PATTERNS.items():
+        detected[name] = contains_pattern(pattern, message)
 
-    if credential_request:
+    # Credential requests are especially important.
+    if detected["Credential request"]:
         score += 90
         indicators.append(
-            "Sensitive credential sharing request detected"
+            "Request involving sensitive credentials detected"
         )
 
-    # -----------------------------------------------------
-    # 2. ACCOUNT THREATS
-    # -----------------------------------------------------
+    if detected["Link action"]:
+        score += 15
+        indicators.append("Request to access a link detected")
 
-    account_threat = contains_pattern(
-        ACCOUNT_THREAT_PATTERN, message
-    )
+    if detected["Personal detail verification"]:
+        score += 10
+        indicators.append(
+            "Request to verify personal details detected"
+        )
 
-    if account_threat:
+    if detected["Prize or reward"]:
         score += 25
-        indicators.append("Account suspension or blocking threat")
+        indicators.append("Prize or reward claim detected")
 
-    # -----------------------------------------------------
-    # 3. URGENT LANGUAGE
-    # -----------------------------------------------------
-
-    urgency = contains_pattern(
-        URGENCY_PATTERN, message
-    )
-
-    if urgency:
-        score += 12
-        indicators.append("Urgent or pressure-based language")
-
-    # -----------------------------------------------------
-    # 4. FAKE PRIZE / REWARD
-    # -----------------------------------------------------
-
-    prize = contains_pattern(
-        PRIZE_PATTERN, message
-    )
-
-    fee = contains_pattern(
-        FEE_PATTERN, message
-    )
-
-    if prize:
+    if detected["Payment pressure"]:
         score += 25
-        indicators.append("Unexpected prize or reward claim")
+        indicators.append("Payment pressure detected")
 
-    if fee:
-        score += 25
-        indicators.append("Advance or processing fee request")
-
-    # -----------------------------------------------------
-    # 5. REFUND FEE SCAM
-    # -----------------------------------------------------
-
-    if contains_pattern(REFUND_FEE_PATTERN, message):
+    if detected["Refund fee request"]:
         score += 40
-        indicators.append("Suspicious refund fee request")
+        indicators.append("Refund-related fee request detected")
 
-    # -----------------------------------------------------
-    # 6. SUSPICIOUS URL CHECK
-    # -----------------------------------------------------
+    # Check URLs separately.
+    url_indicators = check_suspicious_urls(message)
 
-    url_indicators = analyze_urls(message)
-
-    if url_indicators:
+    for item in url_indicators:
         score += 25
-        indicators.extend(url_indicators)
+        indicators.append(item)
 
-    # -----------------------------------------------------
-    # 7. COMBINATION-BASED RISK
-    # -----------------------------------------------------
-
-    if account_threat and urgency:
+    # Combination rules: multiple warning signs increase risk.
+    if (
+        detected["Account threat"]
+        and detected["Link action"]
+        and detected["Personal detail verification"]
+    ):
         score += 15
         indicators.append(
-            "Combined account threat and urgency pattern"
+            "Account threat combined with link-based verification"
         )
 
-    if prize and fee:
+    if (
+        detected["Prize or reward"]
+        and detected["Payment pressure"]
+    ):
         score += 15
         indicators.append(
             "Prize claim combined with payment request"
         )
 
-    # -----------------------------------------------------
-    # 8. FINAL SCORE
-    # -----------------------------------------------------
+    if (
+        detected["Account threat"]
+        and detected["Urgency"]
+    ):
+        score += 10
+        indicators.append(
+            "Account threat combined with urgency"
+        )
 
+    # Keep the score within 0-100.
     score = min(score, 100)
 
-    # Critical risk for credential theft attempts
-    if credential_request or score >= 80:
-        risk = "Critical Risk"
-
+    # Risk levels.
+    if detected["Credential request"] or score >= 80:
+        risk_level = "Critical Risk"
     elif score >= 55:
-        risk = "High Risk"
-
+        risk_level = "High Risk"
     elif score >= 25:
-        risk = "Medium Risk"
-
+        risk_level = "Medium Risk"
     else:
-        risk = "Low Risk"
+        risk_level = "Low Risk"
 
-    # Dashboard-compatible binary classification
-    classification = (
-        "Suspicious"
-        if risk in ["Medium Risk", "High Risk", "Critical Risk"]
-        else "Safe"
-    )
-
-    # -----------------------------------------------------
-    # 9. CONFIDENCE INDICATOR
-    # -----------------------------------------------------
-
-    if credential_request:
-        confidence = 99.0
-    elif score >= 55:
-        confidence = 95.0
-    elif score >= 25:
-        confidence = 85.0
-    elif score > 0:
-        confidence = 75.0
+    # Dashboard-compatible classification.
+    if score >= 25:
+        classification = "Suspicious"
+        risk = "Suspicious"
     else:
-        confidence = 92.0
+        classification = "Safe"
+        risk = "Safe"
 
-    # -----------------------------------------------------
-    # 10. RECOMMENDATION
-    # -----------------------------------------------------
+    # This is a heuristic strength indicator, not an ML probability.
+    if risk_level == "Critical Risk":
+        confidence = 99
+    elif risk_level == "High Risk":
+        confidence = 92
+    elif risk_level == "Medium Risk":
+        confidence = 82
+    elif indicators:
+        confidence = 72
+    else:
+        confidence = 65
 
-    if risk == "Critical Risk":
+    # Recommended next step.
+    if risk_level == "Critical Risk":
         recommendation = (
-            "Do not share OTP, PIN or passwords. "
-            "Verify independently through your official bank."
+            "Do not share OTPs, PINs, passwords or card security "
+            "codes. Contact the organization using its official "
+            "website or app."
         )
-
-    elif risk == "High Risk":
+    elif risk_level == "High Risk":
         recommendation = (
-            "Do not make payments or follow suspicious links. "
-            "Verify the sender through official channels."
+            "Do not click the link or provide personal details. "
+            "Verify the message independently through the "
+            "organization's official website or app."
         )
-
-    elif risk == "Medium Risk":
+    elif risk_level == "Medium Risk":
         recommendation = (
-            "Review the message carefully before taking action."
+            "Review the message carefully. Avoid making payments "
+            "or sharing information until the sender is verified."
         )
-
     else:
         recommendation = (
-            "No strong suspicious patterns were detected. "
-            "Still verify the sender before making payments."
+            "No strong suspicious patterns were detected by this "
+            "prototype. This does not guarantee the message is safe. "
+            "Verify unexpected requests independently."
         )
 
     return {
         "score": score,
         "risk": risk,
+        "risk_level": risk_level,
         "classification": classification,
         "indicators": list(dict.fromkeys(indicators)),
         "confidence": confidence,
-        "recommendation": recommendation
+        "recommendation": recommendation,
     }
